@@ -1,29 +1,34 @@
-name: Deploy to EC2
+name: Deploy React App to EC2
 
 on:
   push:
-    branches: [ main ]  # Trigger deployment on push to main branch
+    branches: [ master ]  # Trigger deployment on push to main branch
   workflow_dispatch:    # Allow manual trigger
 
 jobs:
-  deploy:
+  build-and-deploy:
     runs-on: ubuntu-latest
     
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
         
-      # Optional: Setup Node.js environment if needed
-      # - name: Setup Node.js
-      #   uses: actions/setup-node@v3
-      #   with:
-      #     node-version: '18'
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
       
-      # Optional: Install dependencies and build if needed
-      # - name: Install dependencies
-      #   run: npm ci
-      # - name: Build project
-      #   run: npm run build
+      - name: Install dependencies
+        run: npm ci
+        
+      - name: Build project
+        run: npm run build
+        env:
+          CI: false  # Prevents build from failing on warnings
+      
+      # Generate a timestamp file to verify deployment
+      - name: Create deployment timestamp
+        run: echo "Deployment timestamp: $(date)" > build/deployment_timestamp.txt
       
       - name: Configure SSH
         env:
@@ -38,8 +43,8 @@ jobs:
       
       - name: Deploy to EC2
         run: |
-          # Create a tar archive of your code
-          tar -czf deploy.tar.gz *
+          # Create a tar archive of the build folder
+          tar -czf deploy.tar.gz -C build .
           
           # Copy to EC2
           scp -o StrictHostKeyChecking=no deploy.tar.gz ec2:~/
@@ -49,26 +54,53 @@ jobs:
             # Set deployment directory (adjust as needed)
             DEPLOY_DIR=/var/www/html
             
+            # Debug information
+            echo "Starting deployment process..."
+            echo "Current directory content before deployment:"
+            ls -la $DEPLOY_DIR
+            
             # Backup current deployment (optional)
             if [ -d "$DEPLOY_DIR" ]; then
-              sudo cp -r $DEPLOY_DIR $DEPLOY_DIR.backup-$(date +%Y%m%d%H%M%S)
+              BACKUP_DIR=$DEPLOY_DIR.backup-$(date +%Y%m%d%H%M%S)
+              sudo cp -r $DEPLOY_DIR $BACKUP_DIR
+              echo "Backup created at $BACKUP_DIR"
             fi
             
             # Extract new deployment
             mkdir -p ~/deployment
             tar -xzf ~/deploy.tar.gz -C ~/deployment
+            echo "Files extracted to temporary directory"
+            ls -la ~/deployment
             
             # Move to web directory (may require sudo)
+            echo "Removing old files and copying new ones..."
             sudo rm -rf $DEPLOY_DIR/*
             sudo cp -r ~/deployment/* $DEPLOY_DIR/
             
             # Fix permissions
             sudo chown -R www-data:www-data $DEPLOY_DIR
             
+            # Clear Nginx cache if exists
+            sudo rm -rf /var/cache/nginx/* 2>/dev/null || true
+            
             # Restart Nginx
             sudo systemctl restart nginx
+            echo "Nginx restarted"
+            
+            # Verify deployment
+            echo "New directory content after deployment:"
+            ls -la $DEPLOY_DIR
+            
+            # Check for timestamp file to verify deployment
+            if [ -f "$DEPLOY_DIR/deployment_timestamp.txt" ]; then
+              echo "Deployment verification:"
+              cat $DEPLOY_DIR/deployment_timestamp.txt
+            else
+              echo "WARNING: Timestamp file not found. Deployment may have issues."
+            fi
             
             # Clean up
             rm ~/deploy.tar.gz
             rm -rf ~/deployment
+            echo "Deployment complete!"
           EOL
