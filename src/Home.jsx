@@ -15,7 +15,7 @@ export default function HomePage() {
           transition={{ duration: 0.5 }}
         />
         <h1 className="text-4xl font-bold mb-2">Hi, I'm Rudresh</h1>
-        <p className="text-xl text-gray-600">Full Stack Developer</p>
+        <p className="text-xl text-gray-600">Full Stack Engineer</p>
       </section>
 
       {/* About Section */}
