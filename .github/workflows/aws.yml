@@ -1,37 +1,30 @@
-name: Deploy React App to EC2
+name: Deploy to EC2
 
 on:
   push:
-    branches: [ main ]  # Trigger deployment on push to main branch
+    branches: [ master ]  # Trigger deployment on push to main branch
   workflow_dispatch:    # Allow manual trigger
 
 jobs:
-  build-and-deploy:
+  deploy:
     runs-on: ubuntu-latest
     
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
         
-      - name: Setup Node.js
-        uses: actions/setup-node@v3
-        with:
-          node-version: '18'
-          cache: 'npm'
-          
-      - name: Install dependencies
-        run: npm ci
-        
-      - name: Build project
-        run: npm run build
-        env:
-          CI: false  # Prevents build from failing on warnings
-          # You can also add environment variables here like:
-          # REACT_APP_API_URL: ${{ secrets.API_URL }}
-
-      - name: Create deployment timestamp
-        run: echo "Deployment timestamp: $(date)" > build/deployment_timestamp.txt
-
+      # Optional: Setup Node.js environment if needed
+      # - name: Setup Node.js
+      #   uses: actions/setup-node@v3
+      #   with:
+      #     node-version: '18'
+      
+      # Optional: Install dependencies and build if needed
+      # - name: Install dependencies
+      #   run: npm ci
+      # - name: Build project
+      #   run: npm run build
+      
       - name: Configure SSH
         env:
           SSH_PRIVATE_KEY: ${{ secrets.EC2_SSH_KEY }}
@@ -42,80 +35,40 @@ jobs:
           echo "$SSH_PRIVATE_KEY" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
           echo -e "Host ec2\n\tHostName $SSH_HOST\n\tUser $SSH_USER\n\tIdentityFile ~/.ssh/deploy_key\n\tStrictHostKeyChecking no\n" > ~/.ssh/config
-
+      
       - name: Deploy to EC2
         run: |
-          # Create a tar archive of the build folder
-          tar -czf deploy.tar.gz -C build .
-
+          # Create a tar archive of your code
+          tar -czf deploy.tar.gz *
+          
           # Copy to EC2
           scp -o StrictHostKeyChecking=no deploy.tar.gz ec2:~/
-
-          # SSH into EC2 and deploy
+          
+          # Deploy commands via SSH
           ssh ec2 << 'EOL'
+            # Set deployment directory (adjust as needed)
             DEPLOY_DIR=/var/www/html
-
-            echo "Starting deployment process..."
-
-            # Prepare temporary deployment directory
-            rm -rf ~/deployment && mkdir -p ~/deployment
-            tar -xzf ~/deploy.tar.gz -C ~/deployment
-            echo "Files extracted to temporary directory"
-
-            if [ ! -f ~/deployment/index.html ]; then
-              echo "ERROR: React build files not found in the extracted directory"
-              ls -la ~/deployment
-              exit 1
+            
+            # Backup current deployment (optional)
+            if [ -d "$DEPLOY_DIR" ]; then
+              sudo cp -r $DEPLOY_DIR $DEPLOY_DIR.backup-$(date +%Y%m%d%H%M%S)
             fi
-
-            # Add cache-busting meta tags to index.html
-            sed -i 's/<head>/<head>\n  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" \/>\n  <meta http-equiv="Pragma" content="no-cache" \/>\n  <meta http-equiv="Expires" content="0" \/>/' ~/deployment/index.html
-            echo "Added cache-busting meta tags to index.html"
-
-            echo "Deploying new files..."
+            
+            # Extract new deployment
+            mkdir -p ~/deployment
+            tar -xzf ~/deploy.tar.gz -C ~/deployment
+            
+            # Move to web directory (may require sudo)
             sudo rm -rf $DEPLOY_DIR/*
             sudo cp -r ~/deployment/* $DEPLOY_DIR/
-
+            
+            # Fix permissions
             sudo chown -R www-data:www-data $DEPLOY_DIR
-            sudo chmod -R 755 $DEPLOY_DIR
-
-            # Clear Nginx cache
-            sudo rm -rf /var/cache/nginx/* 2>/dev/null || true
-            sudo rm -rf /var/run/nginx-cache/* 2>/dev/null || true
-
-            # Setup Nginx config for React app if not already present
-            if [ ! -f /etc/nginx/sites-available/react-app ]; then
-              echo "Configuring Nginx for React Single-Page Application..."
-              sudo bash -c 'cat > /etc/nginx/sites-available/react-app' <<EOF
-server {
-    listen 80;
-    server_name _;
-
-    root $DEPLOY_DIR;
-    index index.html;
-
-    location / {
-        try_files \$uri /index.html;
-        add_header Cache-Control "no-store, must-revalidate";
-    }
-
-    location /static/ {
-        expires 1h;
-        add_header Cache-Control "public, max-age=3600";
-    }
-}
-EOF
-              sudo ln -sf /etc/nginx/sites-available/react-app /etc/nginx/sites-enabled/
-              sudo rm -f /etc/nginx/sites-enabled/default 2>/dev/null || true
-            fi
-
-            sudo nginx -t && sudo systemctl restart nginx
-            echo "Nginx restarted"
-
-            echo "Deployment completed at: $(date)"
-
+            
+            # Restart Nginx
+            sudo systemctl restart nginx
+            
             # Clean up
             rm ~/deploy.tar.gz
             rm -rf ~/deployment
-            echo "Deployment complete!"
-EOL
+          EOL
