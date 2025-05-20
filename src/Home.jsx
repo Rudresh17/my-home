@@ -35,7 +35,7 @@ export default function HomePage() {
             <div key={project} className="p-4 border rounded-xl shadow-sm hover:shadow-md transition">
               <h3 className="text-xl font-medium mb-2">Project Title {project}</h3>
               <p className="text-gray-600 text-sm">
-                Description of project {project}. A brief summary of what technologies were used and its purpose.
+                Description of prfgggoject {project}. A brief summary of what technologies were used and its purpose.
               </p>
             </div>
           ))}
